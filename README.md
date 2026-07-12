@@ -1,4 +1,7 @@
 # 🎬 Beat Sync Editor — 音ハメ動画メーカー
+## 🌐 公開サイト
+
+https://xxno-ahxx.github.io/video-beat-editor/
 
 動画素材とCCライセンス楽曲から**音ハメ動画を自動生成**するWebアプリです。
 サーバー不要・すべてブラウザ内で完結します（GitHub Pagesでホスティング）。
