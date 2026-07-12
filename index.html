@@ -710,18 +710,55 @@ document.querySelectorAll(".bgm-tab").forEach((btn) => {
 
 /* ================================================================
    2.5) iTunes Search API（JPOP・洋楽の30秒プレビュー検索）
-   ・APIキー不要・CORS対応 → ブラウザから直接fetchできる
+   ・APIキー不要だが検索APIはCORS非対応 → 直接fetchはブロックされる
+   ・対策：JSONP（scriptタグ注入・プロキシ不要）をメインに、
+     失敗時は allorigins.win プロキシへフォールバックする2段構え
    ・各結果の previewUrl に30秒のAACクリップが入っている
+     （音声CDNは Access-Control-Allow-Origin: * なので直接fetch可）
    ・「この曲で30秒動画を作る」→ 縦9:16(1080×1920)/30秒/セクション
      カットを自動設定する「30秒ショートモード」に入る
    ================================================================ */
+
+/* 方法1：JSONP。iTunes APIは callback= パラメータに対応しているので
+   scriptタグを注入してCORSを回避する（外部プロキシ不要で一番確実） */
+function searchItunesJsonp(query, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    // コールバック名は毎回ユニークにする（連続検索での衝突防止）
+    const cb = "itunesCb_" + Date.now() + "_" + Math.floor(Math.random() * 1e6);
+    const script = document.createElement("script");
+    const timer = setTimeout(() => { cleanup(); reject(new Error("JSONPタイムアウト")); }, timeoutMs || 10000);
+    function cleanup() {
+      clearTimeout(timer);
+      window[cb] = () => {};   // 遅れて届いた応答が来てもエラーにしない
+      if (script.parentNode) script.parentNode.removeChild(script);
+    }
+    window[cb] = (data) => { cleanup(); resolve(data); };
+    script.onerror = () => { cleanup(); reject(new Error("JSONP読み込み失敗")); };
+    script.src = "https://itunes.apple.com/search?term=" + encodeURIComponent(query)
+      + "&media=music&country=JP&limit=20&callback=" + cb;
+    document.head.appendChild(script);
+  });
+}
+
+/* 方法2：allorigins.win プロキシ経由（JSONPが失敗した場合の保険） */
+async function searchItunesViaProxy(query) {
+  const target = "https://itunes.apple.com/search?term=" + encodeURIComponent(query)
+    + "&media=music&country=JP&limit=20";
+  const res = await fetch("https://api.allorigins.win/get?url=" + encodeURIComponent(target));
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  const wrapper = await res.json();               // { contents: "…JSON文字列…" } 形式で返る
+  return JSON.parse(wrapper.contents);
+}
+
 async function searchItunes(query) {
   // country=JP で日本のストア（JPOP中心）を検索。洋楽もヒットする
-  const url = "https://itunes.apple.com/search?term=" + encodeURIComponent(query)
-    + "&media=music&country=JP&limit=20";
-  const res = await fetch(url);
-  if (!res.ok) throw new Error("HTTP " + res.status);
-  const data = await res.json();
+  let data;
+  try {
+    data = await searchItunesJsonp(query);        // まずJSONP（プロキシ不要）
+  } catch (e) {
+    console.warn("iTunes JSONP検索に失敗。プロキシ経由で再試行します。", e);
+    data = await searchItunesViaProxy(query);     // ダメならプロキシ経由
+  }
   // プレビューURLがある曲だけを共通トラック形式に正規化
   return (data.results || []).filter((t) => t.previewUrl).map((t) => ({
     id: "itunes-" + t.trackId,
