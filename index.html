@@ -59,14 +59,24 @@ section.step{
 .step-head h2{font-size:1.05em}
 .step-head .hint{color:var(--sub);font-size:.78em;margin-left:auto;text-align:right}
 
-/* ---- ドロップゾーン ---- */
-#dropzone{
+/* ---- ドロップゾーン（①動画・写真用 と ②音楽ファイル用 で共通デザイン） ---- */
+#dropzone,#bgm-dropzone{
   border:2px dashed var(--border);border-radius:12px;
   padding:34px 12px;text-align:center;color:var(--sub);
   cursor:pointer;transition:.2s;font-size:.95em;
 }
-#dropzone.drag{border-color:var(--accent);background:rgba(230,73,128,.08);color:var(--text)}
-#dropzone .big{font-size:2em;display:block;margin-bottom:6px}
+#dropzone.drag,#bgm-dropzone.drag{border-color:var(--accent);background:rgba(230,73,128,.08);color:var(--text)}
+#dropzone .big,#bgm-dropzone .big{font-size:2em;display:block;margin-bottom:6px}
+
+/* ---- 楽曲選択タブ（検索／手持ちファイル） ---- */
+.bgm-tabs{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}
+.bgm-tab{
+  flex:1;min-width:210px;padding:12px 10px;border-radius:10px;
+  border:1px solid var(--border);background:var(--bg3);color:var(--sub);
+  cursor:pointer;font-size:.88em;font-weight:bold;transition:.15s;
+}
+.bgm-tab:hover{border-color:var(--accent2)}
+.bgm-tab.active{border-color:var(--accent);color:var(--text);background:rgba(230,73,128,.12)}
 
 /* ---- クリップ一覧 ---- */
 #clip-list{display:flex;flex-direction:column;gap:10px;margin-top:14px}
@@ -192,27 +202,47 @@ footer a{color:var(--accent2)}
     <span class="hint">試聴して1曲選択</span>
   </div>
 
-  <!-- Jamendo APIキー（任意）：入力があればJamendoで検索、なければInternet Archiveで検索 -->
-  <div class="row" style="margin-bottom:6px">
-    <input type="text" id="jamendo-key" placeholder="Jamendo APIキー（client_id・任意）">
-    <button class="btn btn-secondary" id="save-key-btn">キー保存</button>
+  <!-- 楽曲の入手方法をタブで選択：検索（著作権フリー）／手持ちファイル -->
+  <div class="bgm-tabs">
+    <button type="button" class="bgm-tab active" data-tab="search">🔍 検索で探す（著作権フリー）</button>
+    <button type="button" class="bgm-tab" data-tab="local">🎵 手持ちの音楽ファイルを使う（JPOP等）</button>
   </div>
-  <p class="note" style="margin:0 0 10px">
-    💡 <b>Jamendo APIキーなしでも検索できます（Internet Archive使用）。</b>
-    キーを入力するとJamendoの楽曲検索に切り替わります（<a href="https://devportal.jamendo.com/" target="_blank" rel="noopener">無料取得はこちら</a>）。
-  </p>
 
-  <!-- 検索ボックス（キーの有無で検索先を自動切替） -->
-  <div class="row">
-    <input type="text" id="search-input" placeholder="アーティスト名 または 曲名（例：piano, rock, lofi）">
-    <button class="btn btn-primary" id="search-btn">🔍 検索</button>
+  <!-- タブ①：楽曲検索（Jamendo / Internet Archive） -->
+  <div class="bgm-panel" id="bgm-panel-search">
+    <!-- Jamendo APIキー（任意）：入力があればJamendoで検索、なければInternet Archiveで検索 -->
+    <div class="row" style="margin-bottom:6px">
+      <input type="text" id="jamendo-key" placeholder="Jamendo APIキー（client_id・任意）">
+      <button class="btn btn-secondary" id="save-key-btn">キー保存</button>
+    </div>
+    <p class="note" style="margin:0 0 10px">
+      💡 <b>Jamendo APIキーなしでも検索できます（Internet Archive使用）。</b>
+      キーを入力するとJamendoの楽曲検索に切り替わります（<a href="https://devportal.jamendo.com/" target="_blank" rel="noopener">無料取得はこちら</a>）。
+    </p>
+
+    <!-- 検索ボックス（キーの有無で検索先を自動切替） -->
+    <div class="row">
+      <input type="text" id="search-input" placeholder="アーティスト名 または 曲名（例：piano, rock, lofi）">
+      <button class="btn btn-primary" id="search-btn">🔍 検索</button>
+    </div>
+    <div id="track-list"></div>
   </div>
-  <div id="track-list"></div>
 
-  <!-- 音源がCORS等で読めない場合の保険：手持ち音源 -->
-  <p class="note">🎵 手持ちの音源ファイル（MP3/WAV等）を使う場合はこちら →
-    <input type="file" id="bgm-file" accept="audio/*" style="font-size:.9em">
-  </p>
+  <!-- タブ②：手持ちの音楽ファイル（MP3/AAC/WAV/OGG） -->
+  <div class="bgm-panel" id="bgm-panel-local" style="display:none">
+    <div id="bgm-dropzone">
+      <span class="big">🎵</span>
+      ここに音楽ファイルをドラッグ＆ドロップ<br>（クリックでファイル選択）<br>
+      <span style="font-size:.85em">対応形式：MP3 / AAC / WAV / OGG</span>
+      <input type="file" id="bgm-file" accept="audio/*,.mp3,.aac,.m4a,.wav,.ogg" hidden>
+    </div>
+    <p class="note" style="margin-top:10px">
+      JPOPなど市販楽曲をお持ちの場合はこちらからアップロードしてください。
+      YouTube・TikTokへの非収益化投稿であればContent IDシステムによる処理の対象になりますが、
+      動画が削除されることは通常ありません。
+    </p>
+  </div>
+
   <div id="bgm-status"></div>
 </section>
 
@@ -646,14 +676,27 @@ async function selectTrack(track, div) {
     await setBgmFromArrayBuffer(arr, track.title, track.artist, track.licenseUrl);
   } catch (err) {
     console.error(err);
-    $("bgm-status").innerHTML = `<span style="color:var(--err)">❌ 音源の取得に失敗しました（${escapeHtml(err.message)}）。下の「手持ちの音源ファイル」をお試しください。</span>`;
+    $("bgm-status").innerHTML = `<span style="color:var(--err)">❌ 音源の取得に失敗しました（${escapeHtml(err.message)}）。「手持ちの音楽ファイルを使う」タブからのアップロードをお試しください。</span>`;
   }
 }
 
-/* 手持ち音源フォールバック */
-$("bgm-file").addEventListener("change", async (e) => {
-  const f = e.target.files[0];
+/* ---- 楽曲選択タブの切り替え（検索／手持ちファイル） ---- */
+document.querySelectorAll(".bgm-tab").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".bgm-tab").forEach((b) => b.classList.toggle("active", b === btn));
+    $("bgm-panel-search").style.display = btn.dataset.tab === "search" ? "" : "none";
+    $("bgm-panel-local").style.display  = btn.dataset.tab === "local"  ? "" : "none";
+  });
+});
+
+/* ---- 手持ち音源の読み込み（ファイル選択・ドラッグ＆ドロップ共通） ---- */
+async function loadBgmFile(f) {
   if (!f) return;
+  // 音声ファイル以外は弾く（拡張子でも判定：一部環境でMIMEが空になるため）
+  if (!/^audio\//.test(f.type) && !/\.(mp3|aac|m4a|wav|ogg)$/i.test(f.name)) {
+    $("bgm-status").innerHTML = `<span style="color:var(--err)">❌ 音楽ファイル（MP3/AAC/WAV/OGG）を選んでください</span>`;
+    return;
+  }
   $("bgm-status").innerHTML = "⏳ 音源を解析中…";
   try {
     const arr = await f.arrayBuffer();
@@ -661,6 +704,17 @@ $("bgm-file").addEventListener("change", async (e) => {
   } catch (err) {
     $("bgm-status").innerHTML = `<span style="color:var(--err)">❌ 解析に失敗しました：${escapeHtml(err.message)}</span>`;
   }
+}
+$("bgm-file").addEventListener("change", (e) => loadBgmFile(e.target.files[0]));
+
+/* 手持ち音源用ドロップゾーン（動画用と同じ挙動） */
+const bgmDropzone = $("bgm-dropzone");
+bgmDropzone.addEventListener("click", () => $("bgm-file").click());
+bgmDropzone.addEventListener("dragover", (e) => { e.preventDefault(); bgmDropzone.classList.add("drag"); });
+bgmDropzone.addEventListener("dragleave", () => bgmDropzone.classList.remove("drag"));
+bgmDropzone.addEventListener("drop", (e) => {
+  e.preventDefault(); bgmDropzone.classList.remove("drag");
+  loadBgmFile(e.dataTransfer.files[0]);
 });
 
 async function setBgmFromArrayBuffer(arrayBuffer, name, artist, license) {
