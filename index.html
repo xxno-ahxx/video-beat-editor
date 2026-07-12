@@ -166,7 +166,7 @@ footer a{color:var(--accent2)}
 
 <header>
   <h1>🎬 Beat Sync Editor <span class="beat">♪</span> 音ハメ動画メーカー</h1>
-  <p>動画をアップロード → CC楽曲を選択 → ビートに合わせて自動編集 → MP4書き出し（すべてブラウザ内で完結）</p>
+  <p>動画・写真をアップロード → CC楽曲を選択 → 曲の展開やビートに合わせて自動編集 → MP4書き出し（すべてブラウザ内で完結）</p>
 </header>
 
 <main>
@@ -174,13 +174,13 @@ footer a{color:var(--accent2)}
 <!-- ============ ① 動画アップロード ============ -->
 <section class="step" id="step1">
   <div class="step-head">
-    <div class="step-num">1</div><h2>動画をアップロード</h2>
-    <span class="hint">MP4 / MOV 複数OK</span>
+    <div class="step-num">1</div><h2>動画・写真をアップロード</h2>
+    <span class="hint">MP4 / MOV / JPEG / PNG / WebP 複数OK</span>
   </div>
   <div id="dropzone">
     <span class="big">📂</span>
-    ここに動画ファイルをドラッグ＆ドロップ<br>（クリックでファイル選択）
-    <input type="file" id="file-input" accept="video/mp4,video/quicktime,.mp4,.mov" multiple hidden>
+    ここに動画・写真ファイルをドラッグ＆ドロップ<br>（クリックでファイル選択）
+    <input type="file" id="file-input" accept="video/*,image/*,.mp4,.mov,.jpg,.jpeg,.png,.webp" multiple hidden>
   </div>
   <div id="clip-list"></div>
 </section>
@@ -223,13 +223,34 @@ footer a{color:var(--accent2)}
     <span class="hint">テロップは①の各クリップ欄で入力</span>
   </div>
   <div class="settings">
-    <div class="setting">
-      <label>カット間隔（何ビートごとに切替）</label>
-      <select id="beat-div">
-        <option value="1">1ビートごと（激しめ）</option>
-        <option value="2" selected>2ビートごと（標準）</option>
-        <option value="4">4ビートごと（ゆったり）</option>
-      </select>
+    <!-- カットのタイミング：セクション検出（曲の展開）／ビート間隔 の2モード -->
+    <div class="setting" style="grid-column:1/-1">
+      <label>カットのタイミング</label>
+      <div class="toggle" style="gap:18px;flex-wrap:wrap">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+          <input type="radio" name="cut-mode" value="section" checked>
+          <span>🎼 曲の展開に合わせる（セクション検出）</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+          <input type="radio" name="cut-mode" value="beat">
+          <span>🥁 ビート間隔で刻む</span>
+        </label>
+      </div>
+      <!-- セクションモード用：カット数スライダー -->
+      <div id="section-opts" style="margin-top:12px">
+        <label>セクション数（カット数）：<b id="section-count-label" style="color:var(--accent2)">8</b></label>
+        <input type="range" id="section-count" min="4" max="20" value="8" style="width:100%;accent-color:var(--accent)">
+        <p class="note" style="margin-top:4px">曲のエネルギー変化（Aメロ→Bメロ→サビ等の切り替わり）を検出してカットします</p>
+      </div>
+      <!-- ビートモード用：既存の間隔セレクト -->
+      <div id="beat-opts" style="margin-top:12px;display:none">
+        <label>カット間隔（何ビートごとに切替）</label>
+        <select id="beat-div">
+          <option value="1">1ビートごと（激しめ）</option>
+          <option value="2" selected>2ビートごと（標準）</option>
+          <option value="4">4ビートごと（ゆったり）</option>
+        </select>
+      </div>
     </div>
     <div class="setting">
       <label>動画の長さ</label>
@@ -327,24 +348,37 @@ fileInput.addEventListener("change", () => { addFiles(fileInput.files); fileInpu
 
 function addFiles(fileList) {
   for (const f of fileList) {
-    // MP4/MOV以外はスキップ（拡張子でも判定：MOVはtypeが空のことがある）
-    const ok = /video\/(mp4|quicktime)/.test(f.type) || /\.(mp4|mov)$/i.test(f.name);
-    if (!ok) continue;
+    // 動画（MP4/MOV）と画像（JPEG/PNG/WebP）を受け付ける
+    // 拡張子でも判定：MOVはtypeが空のことがある
+    const isVideo = /video\/(mp4|quicktime)/.test(f.type) || /\.(mp4|mov)$/i.test(f.name);
+    const isImage = /image\/(jpeg|png|webp)/.test(f.type) || /\.(jpe?g|png|webp)$/i.test(f.name);
+    if (!isVideo && !isImage) continue;
     const url = URL.createObjectURL(f);
-    const video = document.createElement("video");
-    video.src = url; video.muted = true; video.playsInline = true; video.preload = "auto";
-    const clip = { file: f, url, video, duration: 0, telop: "" };
-    video.addEventListener("loadedmetadata", () => {
-      clip.duration = video.duration;
-      renderClipList();
-    });
-    // サムネイル用：最初のフレームが読めたらキャンバスに描画
-    video.addEventListener("loadeddata", () => {
-      if (clip.thumbDrawn) return;
-      clip.thumbDrawn = true;
-      renderClipList();
-    }, { once: true });
-    state.clips.push(clip);
+
+    if (isImage) {
+      // ---- 写真クリップ：<img>でCanvasに静止描画。表示時間はデフォルト3秒（一覧で変更可） ----
+      const img = new Image();
+      img.src = url;
+      const clip = { file: f, url, img, type: "image", duration: 3, telop: "" };
+      img.addEventListener("load", () => renderClipList(), { once: true });
+      state.clips.push(clip);
+    } else {
+      // ---- 動画クリップ ----
+      const video = document.createElement("video");
+      video.src = url; video.muted = true; video.playsInline = true; video.preload = "auto";
+      const clip = { file: f, url, video, type: "video", duration: 0, telop: "" };
+      video.addEventListener("loadedmetadata", () => {
+        clip.duration = video.duration;
+        renderClipList();
+      });
+      // サムネイル用：最初のフレームが読めたらキャンバスに描画
+      video.addEventListener("loadeddata", () => {
+        if (clip.thumbDrawn) return;
+        clip.thumbDrawn = true;
+        renderClipList();
+      }, { once: true });
+      state.clips.push(clip);
+    }
   }
   renderClipList();
   updateButtons();
@@ -356,19 +390,34 @@ function renderClipList() {
     const div = document.createElement("div");
     div.className = "clip";
 
-    // サムネイル
+    // サムネイル（動画＝最初のフレーム／画像＝そのまま縮小表示）
     const th = document.createElement("canvas");
     th.width = 160; th.height = 90;
     const tctx = th.getContext("2d");
     tctx.fillStyle = "#000"; tctx.fillRect(0, 0, 160, 90);
-    if (clip.video.readyState >= 2) drawCover(tctx, clip.video, 160, 90);
+    if (clip.type === "image") {
+      if (clip.img.complete && clip.img.naturalWidth) drawCover(tctx, clip.img, 160, 90);
+    } else if (clip.video.readyState >= 2) {
+      drawCover(tctx, clip.video, 160, 90);
+    }
     div.appendChild(th);
 
     // ファイル名・長さ・テロップ入力
     const meta = document.createElement("div");
     meta.className = "meta";
-    meta.innerHTML = `<div class="fname">🎞 ${escapeHtml(clip.file.name)}</div>
-      <div class="dur">${clip.duration ? clip.duration.toFixed(1) + "秒" : "読み込み中…"}</div>`;
+    if (clip.type === "image") {
+      // 写真：表示時間の入力欄（デフォルト3秒）※カット同期時は曲のカット割りが優先
+      meta.innerHTML = `<div class="fname">🖼 ${escapeHtml(clip.file.name)}</div>
+        <div class="dur">写真 ／ 表示時間 <input type="number" class="imgdur" min="1" max="30" step="0.5" value="${clip.duration}" style="width:60px;padding:3px 6px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text)"> 秒（曲に同期時はカット割り優先）</div>`;
+      const durInput = meta.querySelector(".imgdur");
+      durInput.addEventListener("input", () => {
+        const v = parseFloat(durInput.value);
+        if (v > 0) clip.duration = v;   // 不正値は無視して直前の値を保持
+      });
+    } else {
+      meta.innerHTML = `<div class="fname">🎞 ${escapeHtml(clip.file.name)}</div>
+        <div class="dur">${clip.duration ? clip.duration.toFixed(1) + "秒" : "読み込み中…"}</div>`;
+    }
     const telopInput = document.createElement("input");
     telopInput.className = "telop"; telopInput.type = "text";
     telopInput.placeholder = "テロップ（例：まずはここから！）";
@@ -678,6 +727,59 @@ function detectBeats(buffer) {
   return beats;
 }
 
+/* ================================================================
+   3.5) セクション境界検出（曲の展開に合わせたカット用）
+   仕組み：3秒ウィンドウ・0.5秒ステップでRMSエネルギー（音の強さ）を計算し、
+           隣のウィンドウとの差（ノベルティ＝変化の大きさ）が大きい時刻を
+           「Aメロ→Bメロ→サビ」等のセクション境界とみなす
+   ================================================================ */
+function detectSectionBoundaries(buffer, targetCuts, totalSec) {
+  const sr = buffer.sampleRate;
+  const data = buffer.getChannelData(0);
+  // 出力尺の範囲だけ解析（フル尺以外は無駄な計算を省く）
+  const limit = Math.min(data.length, Math.ceil(totalSec * sr));
+
+  // 二乗の累積和を先に作る → 任意区間のエネルギー和がO(1)で求まる（高速化）
+  const cum = new Float64Array(limit + 1);
+  for (let i = 0; i < limit; i++) cum[i + 1] = cum[i] + data[i] * data[i];
+
+  const windowSize = Math.floor(sr * 3);    // 3秒ウィンドウ
+  const hopSize = Math.floor(sr * 0.5);     // 0.5秒ずつずらす
+  const energies = [], times = [];
+  for (let i = 0; i + windowSize < limit; i += hopSize) {
+    energies.push(Math.sqrt((cum[i + windowSize] - cum[i]) / windowSize));  // RMS
+    times.push((i + windowSize / 2) / sr);  // 時刻はウィンドウ中心（境界位置のズレ防止）
+  }
+  if (energies.length < 3) return [];       // 短すぎる曲は境界なし
+
+  // ノベルティ＝隣接ウィンドウとのエネルギー差の絶対値
+  const novelty = energies.map((e, i) => (i > 0 ? Math.abs(e - energies[i - 1]) : 0));
+
+  // 変化の大きい順に、最低5秒間隔を守りながら targetCuts 個までピック
+  return findPeaks(novelty, times, targetCuts, 5);
+}
+
+/* ノベルティ上位から、しきい値・局所ピーク・最低間隔の条件を満たすものだけを採用 */
+function findPeaks(novelty, times, targetCuts, minGap) {
+  const maxNov = Math.max(...novelty);
+  if (!(maxNov > 0)) return [];
+  const threshold = maxNov * 0.15;          // 最大変化量の15%未満は「境界なし」とみなす
+  const order = novelty.map((_, i) => i).sort((a, b) => novelty[b] - novelty[a]);
+  const picked = [];
+  for (const i of order) {
+    if (picked.length >= targetCuts) break;
+    if (novelty[i] < threshold) break;                     // 以降はすべて微小変化なので打ち切り
+    // 局所ピークのみ採用（変化の坂の途中ではなく頂点を境界にする）
+    if (i > 0 && novelty[i] < novelty[i - 1]) continue;
+    if (i < novelty.length - 1 && novelty[i] < novelty[i + 1]) continue;
+    const t = times[i];
+    if (t < 1) continue;                                   // 曲頭すぎる境界は除外
+    if (picked.some((p) => Math.abs(p - t) < minGap)) continue;
+    picked.push(t);
+  }
+  return picked.sort((a, b) => a - b);                     // 時刻順に整列して返す
+}
+
 /* ビート間隔の中央値からBPMを推定（表示用） */
 function estimateBpm(beats) {
   if (beats.length < 4) return 0;
@@ -692,17 +794,32 @@ function estimateBpm(beats) {
    4) タイムライン生成 & レンダリング（プレビュー/録画 共通）
    ================================================================ */
 function buildTimeline() {
-  const beatDiv = parseInt($("beat-div").value, 10);   // 何ビートごとに切替
+  const mode = document.querySelector('input[name="cut-mode"]:checked').value;  // section / beat
   const lenSel = $("out-len").value;
   const total = lenSel === "full" ? state.bgm.buffer.duration
                                   : Math.min(parseFloat(lenSel), state.bgm.buffer.duration);
-  // カット時刻：ビートをbeatDiv個ごとに間引き、最短0.35秒間隔を保証
+
+  // ---- カット候補時刻をモード別に作る ----
+  let candidates = [];
+  if (mode === "section") {
+    // 曲の展開（エネルギー変化＝Aメロ→サビ等の切り替わり）からセクション境界を検出
+    const target = parseInt($("section-count").value, 10);
+    candidates = detectSectionBoundaries(state.bgm.buffer, target, total);
+  } else {
+    // ビートをbeatDiv個ごとに間引き
+    const beatDiv = parseInt($("beat-div").value, 10);
+    let count = 0;
+    for (const b of state.beats) {
+      if (b <= 0.1 || b >= total - 0.3) continue;
+      count++;
+      if (count % beatDiv === 0) candidates.push(b);
+    }
+  }
+
+  // ---- 共通：範囲チェック＋最短0.35秒間隔を保証してカット時刻リストに整形 ----
   const cuts = [0];
-  let count = 0;
-  for (const b of state.beats) {
+  for (const b of candidates) {
     if (b <= 0.1 || b >= total - 0.3) continue;
-    count++;
-    if (count % beatDiv !== 0) continue;
     if (b - cuts[cuts.length - 1] < 0.35) continue;
     cuts.push(b);
   }
@@ -716,13 +833,20 @@ function buildTimeline() {
   return { segs, total };
 }
 
-/* 動画をキャンバスにcover表示（アスペクト維持で全面に敷く） */
-function drawCover(ctx, video, cw, ch) {
-  const vw = video.videoWidth, vh = video.videoHeight;
+/* 動画/画像をキャンバスにcover表示（アスペクト維持で全面に敷く）
+   source は <video>（videoWidth）でも <img>（naturalWidth）でもOK */
+function drawCover(ctx, source, cw, ch) {
+  const vw = source.videoWidth || source.naturalWidth;
+  const vh = source.videoHeight || source.naturalHeight;
   if (!vw || !vh) return;
   const scale = Math.max(cw / vw, ch / vh);
   const dw = vw * scale, dh = vh * scale;
-  ctx.drawImage(video, (cw - dw) / 2, (ch - dh) / 2, dw, dh);
+  ctx.drawImage(source, (cw - dw) / 2, (ch - dh) / 2, dw, dh);
+}
+
+/* クリップの描画ソースを返す（動画→<video>／写真→<img>） */
+function mediaOf(clip) {
+  return clip.type === "image" ? clip.img : clip.video;
 }
 
 /* テロップ描画（フェードイン・下部中央・縁取り付き） */
@@ -799,8 +923,8 @@ async function startRender(record) {
     for (const s of segs) if (s.start > 0.05) scheduleBeep(audioCtx, outs, t0 + s.start);
   }
 
-  // --- 動画の準備：全クリップを先頭に巻き戻し ---
-  for (const c of state.clips) { try { c.video.currentTime = 0; } catch (_) {} }
+  // --- 動画の準備：全動画クリップを先頭に巻き戻し（写真は不要） ---
+  for (const c of state.clips) { if (c.type !== "image") try { c.video.currentTime = 0; } catch (_) {} }
 
   // --- 録画セットアップ ---
   let recorder = null, chunks = [], recMime = "";
@@ -825,9 +949,12 @@ async function startRender(record) {
   let segIdx = -1, rafId = 0, stopped = false;
 
   const switchSeg = (i) => {
-    if (segIdx >= 0) segs[segIdx].clip.video.pause();
+    // 前セグメントが動画なら一時停止（写真は再生の概念なし）
+    if (segIdx >= 0 && segs[segIdx].clip.type !== "image") segs[segIdx].clip.video.pause();
     segIdx = i;
-    const v = segs[i].clip.video;
+    const clip = segs[i].clip;
+    if (clip.type === "image") return;   // 写真は静止表示のみ
+    const v = clip.video;
     // クリップの残りが少なければ先頭から再生し直す
     if (v.duration && v.currentTime > v.duration - 0.3) v.currentTime = 0;
     v.play().catch(() => {});
@@ -838,7 +965,7 @@ async function startRender(record) {
     stopped = true;
     cancelAnimationFrame(rafId);
     state.playing = false;
-    for (const c of state.clips) c.video.pause();
+    for (const c of state.clips) if (c.type !== "image") c.video.pause();
     try { bgmSrc.stop(); } catch (_) {}
     if (recorder && recorder.state !== "inactive") {
       await new Promise((r) => { recorder.onstop = r; recorder.stop(); });
@@ -865,9 +992,9 @@ async function startRender(record) {
       while (i < segs.length - 1 && t >= segs[i].end) i++;
       if (i !== segIdx) switchSeg(i);
       const seg = segs[segIdx];
-      // 背景 → 動画 → テロップ の順に描画
+      // 背景 → 動画/写真 → テロップ の順に描画
       ctx2d.fillStyle = "#000"; ctx2d.fillRect(0, 0, cw, ch);
-      drawCover(ctx2d, seg.clip.video, cw, ch);
+      drawCover(ctx2d, mediaOf(seg.clip), cw, ch);
       const alpha = Math.min(1, (t - seg.start) / 0.4);   // 0.4秒でフェードイン
       drawTelop(ctx2d, seg.telop, cw, ch, alpha);
       progressBar.value = (t / total) * 100;
@@ -944,7 +1071,8 @@ function offerDownload(blob, ext) {
    ボタン制御
    ================================================================ */
 function updateButtons() {
-  const ready = state.clips.length > 0 && state.bgm && state.beats.length > 0;
+  // クリップとBGMがあればOK（セクション検出モードはビート数に依存しない）
+  const ready = state.clips.length > 0 && state.bgm;
   $("preview-btn").disabled = !ready || state.playing;
   $("export-btn").disabled = !ready || state.playing;
   $("stop-btn").disabled = !state.playing;
@@ -955,6 +1083,20 @@ function updateButtons() {
 $("preview-btn").onclick = () => startRender(false);
 $("export-btn").onclick = () => startRender(true);
 $("stop-btn").onclick = () => { if (state.render) state.render.stop(); };
+
+/* ---- カットモード切替UI：選択に応じて設定欄を出し分け ---- */
+document.querySelectorAll('input[name="cut-mode"]').forEach((r) => {
+  r.addEventListener("change", updateCutModeUI);
+});
+function updateCutModeUI() {
+  const isSection = document.querySelector('input[name="cut-mode"]:checked').value === "section";
+  $("section-opts").style.display = isSection ? "" : "none";
+  $("beat-opts").style.display = isSection ? "none" : "";
+}
+/* セクション数スライダーの現在値を表示 */
+$("section-count").addEventListener("input", () => {
+  $("section-count-label").textContent = $("section-count").value;
+});
 </script>
 </body>
 </html>
