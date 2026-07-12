@@ -162,6 +162,24 @@ progress{width:100%;height:10px;margin-top:8px;accent-color:var(--accent);displa
   background:var(--ok);color:#fff;padding:12px 24px;border-radius:10px;
   text-decoration:none;font-weight:bold;
 }
+/* ---- 全自動音ハメセット（楽曲＋素材が揃うと表示される） ---- */
+#auto-step{
+  border:2px solid var(--accent);
+  background:linear-gradient(135deg,rgba(230,73,128,.10),rgba(34,211,238,.06));
+}
+#auto-set-btn{
+  width:100%;font-size:1.15em;padding:16px 20px;
+  background:linear-gradient(90deg,var(--accent),#c2255c);
+  animation:autoPulse 2.2s ease-in-out infinite;
+}
+@keyframes autoPulse{
+  0%,100%{box-shadow:0 0 0 0 rgba(230,73,128,.45)}
+  50%{box-shadow:0 0 0 10px rgba(230,73,128,0)}
+}
+.auto-sub-row{display:flex;gap:10px;margin-top:10px;flex-wrap:wrap}
+.auto-sub-row .btn{flex:1;min-width:180px}
+#auto-status{margin-top:10px;font-size:.85em;line-height:1.7}
+
 footer{
   text-align:center;color:var(--sub);font-size:.72em;
   padding:20px 12px;border-top:1px solid var(--border);margin-top:30px;
@@ -260,6 +278,26 @@ footer a{color:var(--accent2)}
   </div>
 
   <div id="bgm-status"></div>
+</section>
+
+<!-- ============ ✨ 全自動音ハメセット（楽曲＋素材が揃うと表示） ============ -->
+<section class="step" id="auto-step" style="display:none">
+  <div class="step-head">
+    <div class="step-num">✨</div><h2>全自動音ハメセット</h2>
+    <span class="hint">順番・表示時間・カット全部おまかせ</span>
+  </div>
+  <p class="note" style="margin:0 0 12px">
+    曲の展開（セクション）を自動検出し、素材を<b>動画・写真交互</b>に並べ替えて、
+    各素材の表示時間を<b>セクションの長さにピッタリ合わせて</b>自動セットします。
+    セット後も①の並べ替え・表示時間や③の設定で手動調整できます。
+  </p>
+  <!-- メイン：自動セット→そのまま書き出しまで実行 -->
+  <button class="btn btn-primary" id="auto-set-btn">🎬 自動で音ハメ動画を作る</button>
+  <div class="auto-sub-row">
+    <button class="btn btn-secondary" id="auto-preview-btn">▶️ 自動セットしてプレビュー確認</button>
+    <button class="btn btn-secondary" id="shuffle-btn">🔀 ランダムシャッフル（並びだけ変える）</button>
+  </div>
+  <div id="auto-status"></div>
 </section>
 
 <!-- ============ ③ 編集設定 ============ -->
@@ -830,7 +868,9 @@ async function selectItunesTrack(track, div) {
     // 案内を追記（素材が未アップロードなら①へ誘導）
     $("bgm-status").innerHTML +=
       `<br>📱 <b>30秒ショートモード</b>：縦9:16（1080×1920）／30秒／曲の展開に合わせてカット、に自動設定しました。` +
-      (state.clips.length ? "" : "<br>👆 <b>①で写真・動画をアップロード</b>してください。");
+      (state.clips.length
+        ? `<br>✨ すぐ下の<b>「🎬 自動で音ハメ動画を作る」</b>ボタンで、順番・表示時間まで全自動でセットできます。`
+        : "<br>👆 <b>①で写真・動画をアップロード</b>してください。");
     if (!state.clips.length) $("step1").scrollIntoView({ behavior: "smooth" });
   } catch (err) {
     console.error(err);
@@ -992,6 +1032,75 @@ function estimateBpm(beats) {
   gaps.sort((a, b) => a - b);
   const med = gaps[Math.floor(gaps.length / 2)];
   return med > 0 ? Math.round(60 / med) : 0;
+}
+
+/* ================================================================
+   3.7) 全自動音ハメセット
+   ・素材を「動画・写真交互」に自動ソート（またはランダムシャッフル）
+   ・曲のセクション検出結果（detectSectionBoundaries）に合わせて
+     各素材の表示時間を自動設定（素材が足りなければ循環して使う）
+   ・ワンクリックでタイムライン構築→書き出し／プレビューまで実行
+   ================================================================ */
+
+/* 動画と写真を交互に並べ替える（多い方を先頭にして、余った分は末尾に続ける） */
+function autoSortClips() {
+  const videos = state.clips.filter((c) => c.type === "video");
+  const images = state.clips.filter((c) => c.type === "image");
+  const [first, second] = videos.length >= images.length ? [videos, images] : [images, videos];
+  const merged = [];
+  for (let i = 0; i < Math.max(first.length, second.length); i++) {
+    if (first[i]) merged.push(first[i]);
+    if (second[i]) merged.push(second[i]);
+  }
+  state.clips = merged;
+  renderClipList();
+}
+
+/* Fisher-Yates法でランダムシャッフル（押すたびに違う並びを試せる） */
+function shuffleClips() {
+  for (let i = state.clips.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [state.clips[i], state.clips[j]] = [state.clips[j], state.clips[i]];
+  }
+  renderClipList();
+}
+
+/* 全自動セット本体
+   sortMode: "alt"＝動画・写真交互 ／ "keep"＝現在の並びのまま（シャッフル後用）
+   戻り値: 構築したタイムライン（失敗時はnull） */
+function autoBeatSet(sortMode) {
+  if (!state.clips.length || !state.bgm) return null;
+
+  // ① カットモードを「曲の展開に合わせる（セクション検出）」に自動設定。
+  //    セクション数は素材数×2（各素材が1〜2回登場する目安・4〜20の範囲）で自動決定
+  document.querySelector('input[name="cut-mode"][value="section"]').checked = true;
+  updateCutModeUI();
+  const target = Math.min(20, Math.max(4, state.clips.length * 2));
+  $("section-count").value = target;
+  $("section-count-label").textContent = target;
+
+  // ② 素材の並び順を自動決定
+  if (sortMode !== "keep") autoSortClips();
+
+  // ③ タイムライン構築（各カットの長さ＝セクション長。素材はラウンドロビンで割当）
+  //    素材数 < カット数 → 循環して繰り返し使用／素材数 > カット数 → 先頭から必要数のみ使用
+  const tl = buildTimeline();
+  if (!tl.segs.length) return null;
+
+  // ④ 写真クリップの表示時間欄に、割り当てられたセクション長を反映（手動調整の起点になる）
+  for (const s of tl.segs) {
+    if (s.clip.type === "image") s.clip.duration = Math.round((s.end - s.start) * 10) / 10;
+  }
+  renderClipList();
+
+  // 結果サマリーを表示
+  const lens = tl.segs.map((s) => (s.end - s.start).toFixed(1)).join(" / ");
+  $("auto-status").innerHTML =
+    `✅ <b>自動セット完了！</b> 全${tl.segs.length}カット・合計${tl.total.toFixed(1)}秒<br>` +
+    `📐 各カットの長さ（秒）：${lens}<br>` +
+    `🔁 素材${state.clips.length}個を${tl.segs.length >= state.clips.length ? "循環させて" : "先頭から順に"}割り当てました。` +
+    `並べ替え・表示時間は①、カット数・長さは③でいつでも手動調整できます。`;
+  return tl;
 }
 
 /* ================================================================
@@ -1281,6 +1390,11 @@ function updateButtons() {
   $("preview-btn").disabled = !ready || state.playing;
   $("export-btn").disabled = !ready || state.playing;
   $("stop-btn").disabled = !state.playing;
+  // 全自動音ハメセット：楽曲と素材が揃ったらセクションごと表示する
+  $("auto-step").style.display = ready ? "" : "none";
+  $("auto-set-btn").disabled = !ready || state.playing;
+  $("auto-preview-btn").disabled = !ready || state.playing;
+  $("shuffle-btn").disabled = !ready || state.playing;
   if (ready && !state.playing) {
     setStatus(`準備OK！ クリップ${state.clips.length}本 × BGM「${state.bgm.name}」`, "ok");
   }
@@ -1288,6 +1402,31 @@ function updateButtons() {
 $("preview-btn").onclick = () => startRender(false);
 $("export-btn").onclick = () => startRender(true);
 $("stop-btn").onclick = () => { if (state.render) state.render.stop(); };
+
+/* ---- 全自動音ハメセットのボタン ---- */
+// メイン：自動セット → そのまま書き出し（録画開始）まで一気に実行
+$("auto-set-btn").onclick = () => {
+  const tl = autoBeatSet("alt");
+  if (!tl) { setStatus("自動セットに失敗しました。素材と楽曲を確認してください。", "err"); return; }
+  $("step4").scrollIntoView({ behavior: "smooth" });
+  startRender(true);
+};
+// プレビューで確認したい人向け：自動セット → プレビュー再生
+$("auto-preview-btn").onclick = () => {
+  const tl = autoBeatSet("alt");
+  if (!tl) { setStatus("自動セットに失敗しました。素材と楽曲を確認してください。", "err"); return; }
+  $("step4").scrollIntoView({ behavior: "smooth" });
+  startRender(false);
+};
+// ランダムシャッフル：並びだけ変えてタイムラインを組み直す（書き出しは④のボタンで）
+$("shuffle-btn").onclick = () => {
+  shuffleClips();
+  const tl = autoBeatSet("keep");   // 並びは維持したまま表示時間・カットを再セット
+  if (tl) {
+    $("auto-status").innerHTML += `<br>🔀 ランダムな並びでセットしました。気に入らなければもう一度シャッフル、` +
+      `よければ④の「▶️ プレビュー再生」か「💾 MP4を書き出す」を押してください。`;
+  }
+};
 
 /* ---- カットモード切替UI：選択に応じて設定欄を出し分け ---- */
 document.querySelectorAll('input[name="cut-mode"]').forEach((r) => {
