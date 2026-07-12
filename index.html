@@ -130,6 +130,7 @@ section.step{
 .track .tartist{color:var(--sub);font-size:.76em}
 .track .tlicense{font-size:.68em;color:var(--accent2)}
 .track button{padding:7px 14px;font-size:.8em}
+.track img.art{width:56px;height:56px;border-radius:8px;flex:0 0 56px;object-fit:cover;background:#000}
 #bgm-status{margin-top:10px;font-size:.85em}
 .note{color:var(--sub);font-size:.76em;margin-top:8px}
 .note a{color:var(--accent2)}
@@ -198,14 +199,15 @@ footer a{color:var(--accent2)}
 <!-- ============ ② 楽曲検索・選択 ============ -->
 <section class="step" id="step2">
   <div class="step-head">
-    <div class="step-num">2</div><h2>楽曲を選ぶ（CCライセンス）</h2>
+    <div class="step-num">2</div><h2>楽曲を選ぶ</h2>
     <span class="hint">試聴して1曲選択</span>
   </div>
 
-  <!-- 楽曲の入手方法をタブで選択：検索（著作権フリー）／手持ちファイル -->
+  <!-- 楽曲の入手方法をタブで選択：検索（著作権フリー）／iTunes（30秒ショート）／手持ちファイル -->
   <div class="bgm-tabs">
     <button type="button" class="bgm-tab active" data-tab="search">🔍 検索で探す（著作権フリー）</button>
-    <button type="button" class="bgm-tab" data-tab="local">🎵 手持ちの音楽ファイルを使う（JPOP等）</button>
+    <button type="button" class="bgm-tab" data-tab="itunes">🎵 JPOP・洋楽を探す（30秒ショート用）</button>
+    <button type="button" class="bgm-tab" data-tab="local">📁 手持ちの音楽ファイルを使う</button>
   </div>
 
   <!-- タブ①：楽曲検索（Jamendo / Internet Archive） -->
@@ -228,7 +230,21 @@ footer a{color:var(--accent2)}
     <div id="track-list"></div>
   </div>
 
-  <!-- タブ②：手持ちの音楽ファイル（MP3/AAC/WAV/OGG） -->
+  <!-- タブ②：iTunes検索（JPOP・洋楽の30秒プレビュー → ショート動画用） -->
+  <div class="bgm-panel" id="bgm-panel-itunes" style="display:none">
+    <div class="row">
+      <input type="text" id="itunes-input" placeholder="曲名 または アーティスト名（例：YOASOBI、米津玄師）">
+      <button class="btn btn-primary" id="itunes-btn">🔍 検索</button>
+    </div>
+    <p class="note" style="margin-top:10px">
+      ⚠️ iTunesプレビュー（30秒）を使用します。<br>
+      YouTube Shorts・TikTokへの非収益化投稿では、Content IDで
+      楽曲が検出されることがありますが、動画が削除されることは通常ありません。
+    </p>
+    <div id="itunes-track-list"></div>
+  </div>
+
+  <!-- タブ③：手持ちの音楽ファイル（MP3/AAC/WAV/OGG） -->
   <div class="bgm-panel" id="bgm-panel-local" style="display:none">
     <div id="bgm-dropzone">
       <span class="big">🎵</span>
@@ -328,7 +344,7 @@ footer a{color:var(--accent2)}
 </main>
 
 <footer>
-  楽曲：<a href="https://archive.org/" target="_blank" rel="noopener">Internet Archive</a> ／ <a href="https://www.jamendo.com/" target="_blank" rel="noopener">Jamendo</a>（クリエイティブ・コモンズ・ライセンス）／
+  楽曲：<a href="https://archive.org/" target="_blank" rel="noopener">Internet Archive</a> ／ <a href="https://www.jamendo.com/" target="_blank" rel="noopener">Jamendo</a>（クリエイティブ・コモンズ・ライセンス）／ iTunes Search API（30秒プレビュー）／
   動画変換：<a href="https://ffmpegwasm.netlify.app/" target="_blank" rel="noopener">FFmpeg.wasm</a><br>
   ⚠️ 本ツールは非商用利用を想定しています。楽曲を使った動画を公開する際は、各トラックのCCライセンス条件（クレジット表記等）に従ってください。
 </footer>
@@ -352,6 +368,7 @@ const state = {
   beats: [],        // ビート時刻（秒）の配列
   playing: false,   // プレビュー/録画中フラグ
   render: null,     // 実行中レンダリングのハンドル
+  shortsMode: false, // iTunes 30秒ショートモード（縦書き出しを1080×1920にする）
 };
 
 /* ---------- DOMショートカット ---------- */
@@ -680,14 +697,109 @@ async function selectTrack(track, div) {
   }
 }
 
-/* ---- 楽曲選択タブの切り替え（検索／手持ちファイル） ---- */
+/* ---- 楽曲選択タブの切り替え（検索／iTunes／手持ちファイル） ---- */
 document.querySelectorAll(".bgm-tab").forEach((btn) => {
   btn.addEventListener("click", () => {
     document.querySelectorAll(".bgm-tab").forEach((b) => b.classList.toggle("active", b === btn));
-    $("bgm-panel-search").style.display = btn.dataset.tab === "search" ? "" : "none";
-    $("bgm-panel-local").style.display  = btn.dataset.tab === "local"  ? "" : "none";
+    // data-tab の値と bgm-panel-〇〇 のIDを対応させて表示切替
+    ["search", "itunes", "local"].forEach((tab) => {
+      $("bgm-panel-" + tab).style.display = btn.dataset.tab === tab ? "" : "none";
+    });
   });
 });
+
+/* ================================================================
+   2.5) iTunes Search API（JPOP・洋楽の30秒プレビュー検索）
+   ・APIキー不要・CORS対応 → ブラウザから直接fetchできる
+   ・各結果の previewUrl に30秒のAACクリップが入っている
+   ・「この曲で30秒動画を作る」→ 縦9:16(1080×1920)/30秒/セクション
+     カットを自動設定する「30秒ショートモード」に入る
+   ================================================================ */
+async function searchItunes(query) {
+  // country=JP で日本のストア（JPOP中心）を検索。洋楽もヒットする
+  const url = "https://itunes.apple.com/search?term=" + encodeURIComponent(query)
+    + "&media=music&country=JP&limit=20";
+  const res = await fetch(url);
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  const data = await res.json();
+  // プレビューURLがある曲だけを共通トラック形式に正規化
+  return (data.results || []).filter((t) => t.previewUrl).map((t) => ({
+    id: "itunes-" + t.trackId,
+    title: t.trackName || "(タイトルなし)",
+    artist: t.artistName || "アーティスト情報なし",
+    artwork: t.artworkUrl100 || "",
+    audioUrl: t.previewUrl,        // 30秒AACクリップ（直接再生可）
+    source: "iTunes",
+  }));
+}
+
+async function runItunesSearch() {
+  const q = $("itunes-input").value.trim();
+  if (!q) { setStatus("曲名またはアーティスト名を入力してください。", "err"); return; }
+  setStatus("iTunesで検索中…");
+  try {
+    const tracks = await searchItunes(q);
+    renderItunesTracks(tracks);
+    setStatus(tracks.length + "件見つかりました（iTunes）。試聴して選んでください。", "ok");
+  } catch (err) {
+    console.error(err);
+    setStatus("iTunes検索に失敗しました：" + err.message + "（時間をおいて再試行してください）", "err");
+  }
+}
+$("itunes-btn").onclick = runItunesSearch;
+$("itunes-input").addEventListener("keydown", (e) => { if (e.key === "Enter") runItunesSearch(); });
+
+function renderItunesTracks(tracks) {
+  const list = $("itunes-track-list");
+  list.innerHTML = "";
+  if (!tracks.length) { list.innerHTML = '<p class="note">見つかりませんでした。別のキーワードでお試しください。</p>'; return; }
+  tracks.forEach((t) => {
+    const div = document.createElement("div");
+    div.className = "track";
+    div.dataset.tid = t.id;
+    div.innerHTML = `
+      ${t.artwork ? `<img class="art" src="${escapeHtml(t.artwork)}" alt="" loading="lazy">` : ""}
+      <div class="tmeta">
+        <div class="tname">${escapeHtml(t.title)}</div>
+        <div class="tartist">${escapeHtml(t.artist)}</div>
+        <div class="tlicense">🎵 iTunesプレビュー（30秒）</div>
+      </div>
+      <button class="btn btn-secondary listen">▶ 試聴</button>
+      <button class="btn btn-primary pick">この曲で30秒動画を作る</button>`;
+    div.querySelector(".listen").onclick = (e) => togglePreview(t, e.target);
+    div.querySelector(".pick").onclick = () => selectItunesTrack(t, div);
+    list.appendChild(div);
+  });
+}
+
+/* iTunesの曲を選択 → 30秒ショートモードに入る */
+async function selectItunesTrack(track, div) {
+  previewAudio.pause();
+  document.querySelectorAll(".track").forEach((d) => d.classList.remove("selected"));
+  div.classList.add("selected");
+  $("bgm-status").innerHTML = "⏳ 30秒プレビューをダウンロード＆解析中…";
+  try {
+    const res = await fetch(track.audioUrl);   // iTunesプレビューはCORS許可あり
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const arr = await res.arrayBuffer();
+    await setBgmFromArrayBuffer(arr, track.title, track.artist, "", { shorts: true });
+
+    // ---- 30秒ショートモードの自動設定 ----
+    $("aspect").value = "portrait";                            // 縦9:16（1080×1920で書き出し）
+    $("out-len").value = "30";                                 // 長さ30秒（プレビュー自体が30秒）
+    document.querySelector('input[name="cut-mode"][value="section"]').checked = true;  // 曲の展開に合わせる
+    updateCutModeUI();
+
+    // 案内を追記（素材が未アップロードなら①へ誘導）
+    $("bgm-status").innerHTML +=
+      `<br>📱 <b>30秒ショートモード</b>：縦9:16（1080×1920）／30秒／曲の展開に合わせてカット、に自動設定しました。` +
+      (state.clips.length ? "" : "<br>👆 <b>①で写真・動画をアップロード</b>してください。");
+    if (!state.clips.length) $("step1").scrollIntoView({ behavior: "smooth" });
+  } catch (err) {
+    console.error(err);
+    $("bgm-status").innerHTML = `<span style="color:var(--err)">❌ プレビューの取得に失敗しました（${escapeHtml(err.message)}）。別の曲をお試しください。</span>`;
+  }
+}
 
 /* ---- 手持ち音源の読み込み（ファイル選択・ドラッグ＆ドロップ共通） ---- */
 async function loadBgmFile(f) {
@@ -717,7 +829,7 @@ bgmDropzone.addEventListener("drop", (e) => {
   loadBgmFile(e.dataTransfer.files[0]);
 });
 
-async function setBgmFromArrayBuffer(arrayBuffer, name, artist, license) {
+async function setBgmFromArrayBuffer(arrayBuffer, name, artist, license, opts = {}) {
   // 一時AudioContextでデコード（デコード専用・すぐ閉じる）
   const AC = window.AudioContext || window.webkitAudioContext;
   const tmpCtx = new AC();
@@ -725,6 +837,7 @@ async function setBgmFromArrayBuffer(arrayBuffer, name, artist, license) {
   tmpCtx.close();
 
   state.bgm = { name, artist, license, buffer };
+  state.shortsMode = !!opts.shorts;   // iTunes 30秒ショートモード（縦は1080×1920で書き出し）
   state.beats = detectBeats(buffer);   // ビート検出実行
 
   const bpm = estimateBpm(state.beats);
@@ -945,10 +1058,11 @@ async function startRender(record) {
   if (!segs.length) { setStatus("タイムラインを作れませんでした。", "err"); return; }
 
   // キャンバスサイズ設定（横16:9 / 縦9:16）
+  // 30秒ショートモード時の縦はTikTok/Shorts標準の1080×1920で書き出す
   const canvas = $("preview-canvas");
   const portrait = $("aspect").value === "portrait";
-  canvas.width = portrait ? 720 : 1280;
-  canvas.height = portrait ? 1280 : 720;
+  canvas.width  = portrait ? (state.shortsMode ? 1080 : 720)  : 1280;
+  canvas.height = portrait ? (state.shortsMode ? 1920 : 1280) : 720;
   const cw = canvas.width, ch = canvas.height;
   const ctx2d = canvas.getContext("2d");
 
